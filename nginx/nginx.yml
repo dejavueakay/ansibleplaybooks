@@ -1,0 +1,93 @@
+---
+
+- name: Compile NGINX from sources
+  hosts: push
+  vars:
+    nginx_version: nginx-1.13.11
+    nginx_tarball_url: "http://nginx.org/download/{{ nginx_version }}.tar.gz"
+    nginx_install_dir: "/tmp/{{ nginx_version }}"
+    nginx_configure_options: "--prefix=/usr/share/nginx --sbin-path=/usr/sbin/nginx --conf-path=/etc/nginx/nginx.conf --pid-path=/var/run/nginx.pid --lock-path=/var/lock/nginx.lock --error-log-path=/var/log/nginx/error.log --http-log-path=/var/log/access.log --user=www-data --group=www-data --with-http_ssl_module --with-http_stub_status_module --with-http_gzip_static_module --with-mail_ssl_module --with-mail"
+
+  tasks:
+
+  - name: Create a login user
+    user:
+     name: www-data
+     state: present
+     shell: "/bin/false"       # Defaults to /bin/bash
+     system: yes             # Defaults to no
+     createhome: no        # Defaults to yes
+
+  - name: Installing NGINX Dependencies
+    become: yes
+    apt:
+      name: "{{ item }}"
+      update_cache: yes
+    with_items:
+      - libssl-dev
+      - zlib1g-dev
+      - libpcre3
+      - libpcre3-dev
+      - unzip
+      - build-essential
+
+  - name: Downloading NGINX sources
+    get_url:
+      url: "{{ nginx_tarball_url }}"
+      dest: "/tmp/{{ nginx_version }}.tar.gz"
+    register: nginx_source
+
+  - name: Unpacking NGINX
+    unarchive:
+      copy: no
+      dest: /tmp/
+      src: "{{ nginx_source.dest }}"
+    when: nginx_source.changed
+    register: nginx_source_unpack
+
+  - name: Create required Nginx dirs
+    become: yes
+    file:
+      path: /etc/nginx
+      state: directory
+      owner: root
+      mode: 0755
+
+  - name: Configuring NGINX source with custom modules
+    command: "./configure {{ nginx_configure_options }}"
+    args:
+      chdir: "{{ nginx_install_dir }}"
+    when: nginx_source_unpack|changed
+    register: nginx_configure
+
+  - name: Installing NGINX
+    become: yes
+    shell: make && make install
+    args:
+      chdir: "{{ nginx_install_dir }}"
+    when: nginx_configure|changed
+
+  - name: Creating NGINX conf file
+    become: yes
+    copy:
+      src: cfg/
+      dest: /etc/nginx
+      owner: www-data
+      group: www-data
+      mode: 0644
+      force: yes
+
+  - name: Installing NGINX init script (service)
+    become: yes
+    template:
+      src: nginx.service
+      dest: /etc/systemd/system
+      owner: root
+      group: root
+      mode: 0755
+
+  - name: Starting NGINX
+    become: yes
+    service:
+      name: nginx
+      state: started

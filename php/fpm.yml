@@ -1,0 +1,111 @@
+---
+
+- name: Compile PHP-FPM from sources
+  hosts: tes
+  vars:
+    php_version: php-7.2.4
+    php_tarball_url: "http://de2.php.net/get/{{ php_version }}.tar.gz/from/this/mirror"
+    php_install_dir: "/tmp/{{ php_version }}"
+    php_configure_options: "--prefix=/usr --with-config-file-path=/etc/php --enable-mbstring --enable-zip --enable-bcmath --enable-pcntl --enable-ftp --enable-exif --enable-calendar --enable-sysvmsg --enable-sysvsem --enable-sysvshm --enable-wddx --with-curl --with-mcrypt --with-iconv --with-pspell --with-gd --with-jpeg-dir=/usr --with-png-dir=/usr --with-zlib-dir=/usr --with-xpm-dir=/usr --with-freetype-dir=/usr --enable-gd-native-ttf --enable-gd-jis-conv --with-openssl --with-pdo-mysql=/usr --with-gettext=/usr --with-zlib=/usr --with-bz2=/usr --with-mysql --with-mysqli=mysqlnd --enable-pdo --with-pdo-mysql=mysqlnd --with-mysql-sock=/var/run/mysqld/mysqld.sock --enable-sockets --enable-fpm --enable-opcache --with-imap --with-imap-ssl --enable-inline-optimization --with-kerberos --enable-maintainer-zts --enable-pthreads --enable-intl"
+
+  tasks:
+
+  - name: Create a login user
+    user:
+     name: www-data
+     state: present
+     shell: "/bin/false"       # Defaults to /bin/bash
+     system: yes             # Defaults to no
+     createhome: no        # Defaults to yes
+
+  - name: Installing PHP Dependencies
+    become: yes
+    apt:
+      name: "{{ item }}"
+      update_cache: yes
+    with_items:
+      - libssl-dev
+      - zlib1g-dev
+      - libpcre3
+      - libpcre3-dev
+      - unzip
+      - build-essential
+      - libfcgi-dev
+      - libfcgi0ldbl
+      - libjpeg62-turbo-dev
+      - libmcrypt-dev
+      - libc-client2007e
+      - libc-client2007e-dev
+      - libbz2-dev
+      - libcurl4-openssl-dev
+      - libjpeg-dev
+      - libpng-dev
+      - libfreetype6-dev
+      - libkrb5-dev
+      - libpq-dev
+      - libxml2-dev
+      - libxslt1-dev
+      - pkg-config
+      - libxpm-dev
+      - libpspell-dev
+
+  - name: Downloading PHP sources
+    get_url:
+      url: "{{ php_tarball_url }}"
+      dest: "/tmp/{{ php_version }}.tar.gz"
+    register: php_source
+
+  - name: Unpacking PHP
+    unarchive:
+      copy: no
+      dest: /tmp/
+      src: "{{ php_source.dest }}"
+    when: php_source.changed
+    register: php_source_unpack
+
+  - name: Create required PHP dir
+    become: yes
+    file:
+      path: /etc/php
+      state: directory
+      owner: root
+      mode: 0755
+
+  - name: Configuring PHP source with custom modules
+    command: "./configure {{ php_configure_options }}"
+    args:
+      chdir: "{{ php_install_dir }}"
+    when: php_source_unpack|changed
+    register: php_configure
+
+  - name: Installing PHP
+    become: yes
+    shell: make && make install
+    args:
+      chdir: "{{ php_install_dir }}"
+    when: php_configure|changed
+
+  - name: Creating php.ini file
+    become: yes
+    copy:
+      src: cfg/
+      dest: /etc/php
+      owner: www-data
+      group: www-data
+      mode: 0644
+      force: yes
+
+  - name: Installing PHP systemd service script (service)
+    become: yes
+    template:
+      src: fpm.service
+      dest: /etc/systemd/system
+      owner: root
+      group: root
+      mode: 0755
+
+  - name: Starting PHP
+    become: yes
+    service:
+      name: fpm
+      state: started
